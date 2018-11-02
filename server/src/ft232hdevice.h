@@ -144,7 +144,6 @@ public:
     virtual void loadConfiguration(const Value &config);
     virtual void writeMessage(const OPC::Message &msg);
     virtual void writeMessage(Document &msg);
-    virtual void writeColorCorrection(const Value &color);
     virtual std::string getName();
     virtual void flush();
     virtual void describe(rapidjson::Value &object, Allocator &alloc);
@@ -154,12 +153,11 @@ public:
     // Send current buffer contents
     void writeFramebuffer();
 
-    // Framebuffer accessor
-    uint8_t *fbPixel(unsigned num) {
-        return &mFramebuffer.data[4 * (num % PIXELS_PER_PACKET) + 4];
-    }
-
 private:
+    static const uint32_t START_FRAME = 0x00000000;
+    static const uint32_t END_FRAME = 0xFFFFFFFF;
+    static const uint32_t BRIGHTNESS_MASK = 0xE0;
+
     static const unsigned PIXELS_PER_PACKET = 600;
     static const unsigned LUT_ENTRIES_PER_PACKET = 31;
     static const unsigned LUT_PACKETS = 25;
@@ -177,23 +175,25 @@ private:
     static const uint8_t CFLAG_NO_ACTIVITY_LED  = (1 << 2);
     static const uint8_t CFLAG_LED_CONTROL      = (1 << 3);
 
-    struct Packet {
-        uint8_t data[(4*PIXELS_PER_PACKET)+4+300];
-    };
+    union PixelFrame {
+        struct
+        {
+            uint8_t l;
+            uint8_t b;
+            uint8_t g;
+            uint8_t r;
+        };
 
-    enum PacketType {
-        OTHER = 0,
-        FRAME,
+        uint32_t value;
     };
 
     struct Transfer {
-        Transfer(FT232HDevice *device, void *buffer, int length, PacketType type = OTHER);
+        Transfer(FT232HDevice *device, void *buffer, int length);
         ~Transfer();
         libusb_transfer *transfer;
         #if NEED_COPY_USB_TRANSFER_BUFFER
           void *bufferCopy;
         #endif
-        PacketType type;
         bool finished;
     };
 
@@ -206,8 +206,14 @@ private:
     char mVersionString[10];
 
     libusb_device_descriptor mDD;
-    Packet mFramebuffer;
-    Packet mColorLUT[LUT_PACKETS];
+    PixelFrame* mFrameBuffer;
+    PixelFrame* mFlushBuffer;
+    uint32_t mNumLights;
+
+    // buffer accessor
+    PixelFrame *fbPixel(unsigned num) {
+        return &mFrameBuffer[num + 1];
+    }
 
     bool submitTransfer(Transfer *fct);
     void writeDevicePixels(Document &msg);
