@@ -31,116 +31,20 @@
 #include <algorithm>
 #include <stdio.h>
 
-static int bulk_write(libusb_device_handle *handle, unsigned char *output, int nbytes)
-{
-    int bytes_written;
-
-    // if (1) {
-    //     int i;
-    //     fprintf(stderr, "usb bulk write %d bytes:", nbytes);
-    //     for (i=0; i<nbytes; i++)
-    //         fprintf(stderr, "%c%02x", i ? '-' : ' ', output[i]);
-    //     fprintf(stderr, "\n");
-    // }
-
-    int ret = libusb_bulk_transfer(handle, IN_EP, (unsigned char*) output,
-        nbytes, &bytes_written, 1000);
-
-    if (bytes_written != nbytes)
-        fprintf(stderr, "usb bulk written %d bytes of %d",
-            bytes_written, nbytes);
-    
-    return ret;
-}
-
-static void mpsse_speed(libusb_device_handle *handle, int khz)
-{
-    unsigned char output [3];
-    int divisor = (30 * 2000 / khz + 1) / 2 - 1;
-
-    if (divisor < 0)
-        divisor = 0;
-
-    if (30 > 6) {
-        /* Use 60MHz master clock (disable divide by 5). */
-        output[0] = DIS_DIV_5;
-
-        /* Turn off adaptive clocking. */
-        output[1] = DIS_ADAPTIVE;
-
-        /* Disable three-phase clocking. */
-        output[2] = DIS_3_PHASE;
-        bulk_write(handle, output, 3);
-    }
-
-    /* Command "set TCK divisor". */
-    output [0] = TCK_DIVISOR;
-    output [1] = (divisor & 0xFF);
-    output [2] = ((divisor >> 8) & 0xFF);
-    bulk_write(handle, output, 3);
-
-    khz = (30 * 2000 / (divisor + 1) + 1) / 2;
-    fprintf(stderr, "%s: clock rate %.1f MHz\n", "ft232h", khz / 1000.0);
-}
-
-FT232HDevice::Transfer::Transfer(FT232HDevice *device, void *buffer, int length)
-    : transfer(libusb_alloc_transfer(0)), finished(false)
-{
-    #if NEED_COPY_USB_TRANSFER_BUFFER
-        bufferCopy = malloc(length);
-        memcpy(bufferCopy, buffer, length);
-        uint8_t *data = (uint8_t*) bufferCopy;
-    #else
-        uint8_t *data = (uint8_t*) buffer;
-    #endif
-
-    libusb_fill_bulk_transfer(transfer, device->mHandle,
-        IN_EP, data, length, FT232HDevice::completeTransfer, this, 2000);
-}
-
-FT232HDevice::Transfer::~Transfer()
-{
-    libusb_free_transfer(transfer);
-    #if NEED_COPY_USB_TRANSFER_BUFFER
-        free(bufferCopy);
-    #endif
-}
 
 FT232HDevice::FT232HDevice(libusb_device *device, bool verbose)
     : USBDevice(device, "ft232h", verbose),
-      mConfigMap(0), mNumFramesPending(0), mFrameWaitingForSubmit(false),
-      mNumLights(600)
+      mConfigMap(0),
+      mNumLights(0)
 {
     mSerialBuffer[0] = '\0';
     mSerialString = mSerialBuffer;
-
-    uint32_t bufferSize = sizeof(PixelFrame) * (mNumLights + 2); // Number of lights plus start and end frames
-    mFrameBuffer = (PixelFrame*)malloc(bufferSize);
-
-    uint32_t flushCount = (mNumLights / 2) + (mNumLights % 2);
-    mFlushBuffer = (PixelFrame*)malloc(flushCount);
-
-    // Initialize all buffers to zero
-    memset(mFlushBuffer, 0, flushCount);
-    memset(mFrameBuffer, 0, bufferSize);
-
-    // Initialize start and end frames
-    mFrameBuffer[0].value = START_FRAME;
-    mFrameBuffer[mNumLights + 1].value = END_FRAME;
 }
 
 FT232HDevice::~FT232HDevice()
 {
-    /*
-     * If we have pending transfers, cancel them.
-     * The Transfer objects themselves will be freed
-     * once libusb completes them.
-     */
-
-    for (std::set<Transfer*>::iterator i = mPending.begin(), e = mPending.end(); i != e; ++i) {
-        Transfer *fct = *i;
-        libusb_cancel_transfer(fct->transfer);
-    }
+    free(mFrameBuffer);
+    free(mFlushBuffer);
 }
 
 bool FT232HDevice::probe(libusb_device *device)
@@ -152,7 +56,7 @@ bool FT232HDevice::probe(libusb_device *device)
         return false;
     }
 
-    return dd.idVendor == 0x0403 && dd.idProduct == 0x6014;
+    return dd.idVendor == FT232H_VID && dd.idProduct == FT232H_PID;
 }
 
 int FT232HDevice::open()
@@ -162,138 +66,116 @@ int FT232HDevice::open()
         return r;
     }
 
-    r = libusb_open(mDevice, &mHandle);
-    if (r < 0) {
-        return r;
-    }
-
-    r = libusb_claim_interface(mHandle, 0);
-    if (r < 0) {
-        return r;
-    }
-
-    /* Reset the device. */
-    r = libusb_control_transfer(mHandle,
-        FTDI_DEVICE_OUT_REQTYPE,
-        SIO_RESET, 0, 1, 0, 0, 1000);
-    if ( r < 0) {
-        return r;
-    }
-
-    /* MPSSE mode. */
-    r = libusb_control_transfer(mHandle,
-        FTDI_DEVICE_OUT_REQTYPE,
-        SIO_SET_BITMODE_REQUEST, MPSSE_BITMODE, 1, 0, 0, 1000);
-    if ( r < 0) {
-        return r;
-    }
-
-    /* Optimal latency timer is 1 for slow mode and 0 for fast mode. */
-    unsigned latency_timer = 0;
-    r = libusb_control_transfer(mHandle,
-        FTDI_DEVICE_OUT_REQTYPE,
-        SIO_SET_LATENCY_TIMER_REQUEST, latency_timer, 1, 0, 0, 1000);
-    if ( r != 0) {
-        return r;
-    }
-
-    r = libusb_control_transfer(mHandle,
-        FTDI_DEVICE_IN_REQTYPE,
-        SIO_GET_LATENCY_TIMER_REQUEST, 0, 1, (unsigned char*) &latency_timer, 1, 1000);
-    if ( r != 1) {
-        return r;
-    }
-
-    unsigned char enable_loopback[] = "\x85";
-    bulk_write(mHandle, enable_loopback, 1);
-
-    mpsse_speed(mHandle, 10000);
-
-    unsigned major = mDD.bcdDevice >> 8;
-    unsigned minor = mDD.bcdDevice & 0xFF;
-    snprintf(mVersionString, sizeof mVersionString, "%x.%02x", major, minor);
+    mMpsse = mpsse_open_dev(mDevice, TEN_MHZ);
+    mHandle = mMpsse->ftdi.usb_dev;
 
     return libusb_get_string_descriptor_ascii(mHandle, mDD.iSerialNumber, 
         (uint8_t*)mSerialBuffer, sizeof mSerialBuffer);
 }
 
+bool FT232HDevice::matchConfiguration(const Value &config) {
+    const Value &vNumLights = config["numLights"];
+
+    if (vNumLights.IsNull() || !vNumLights.IsUint()) {
+        std::clog << "USB device " << getName() << " configuration missing: \"numLights\"\n";
+        return false;
+    }
+
+    return USBDevice::matchConfiguration(config);
+}
+
 void FT232HDevice::loadConfiguration(const Value &config)
 {
     mConfigMap = findConfigMap(config);
-}
 
-bool FT232HDevice::submitTransfer(Transfer *fct)
-{
-    /*
-     * Submit a new USB transfer. The Transfer object is guaranteed to be freed eventually.
-     * On error, it's freed right away.
-     */
+    const Value &vNumLights = config["numLights"];
+    mNumLights = vNumLights.GetUint();
 
-    int r = libusb_submit_transfer(fct->transfer);
+    uint32_t bufferSize = sizeof(PixelFrame) * (mNumLights + 2); // Number of lights plus start and end frames
+    mFrameBuffer = (PixelFrame*)malloc(bufferSize);
 
-    if (r < 0) {
-        if (mVerbose && r != LIBUSB_ERROR_PIPE) {
-            std::clog << "Error submitting USB transfer: " << libusb_strerror(libusb_error(r)) << "\n";
-        }
-        delete fct;
-        return false;
+    uint32_t flushSize = (mNumLights / 2) + (mNumLights % 2);
+    mFlushBuffer = (PixelFrame*)malloc(flushSize);
 
-    } else {
-        mPending.insert(fct);
-        return true;
-    }
-}
+    // Initialize all buffers to zero
+    memset(mFlushBuffer, 0, flushSize);
+    memset(mFrameBuffer, 0, bufferSize);
 
-void FT232HDevice::completeTransfer(libusb_transfer *transfer)
-{
-    FT232HDevice::Transfer *fct = static_cast<FT232HDevice::Transfer*>(transfer->user_data);
-    fct->finished = true;
+    // Initialize start and end frames
+    mFrameBuffer[0].value = START_FRAME;
+    mFrameBuffer[mNumLights + 1].value = END_FRAME;
 }
 
 void FT232HDevice::flush()
 {
-    // Erase any finished transfers
-    std::set<Transfer*>::iterator current = mPending.begin();
-    while (current != mPending.end()) {
-        std::set<Transfer*>::iterator next = current;
-        next++;
+}
 
-        Transfer *fct = *current;
-        if (fct->finished) {
-            mNumFramesPending--;
-            mPending.erase(current);
-            delete fct;
+void FT232HDevice::writeColorCorrection(const Value &color)
+{
+    // Default color LUT parameters
+    double gamma = 1.0;                         // Power for nonlinear portion of curve
+    double whitepoint[3] = {1.0, 1.0, 1.0};     // White-point RGB value (also, global brightness)
+
+    /*
+     * Parse the JSON object
+     */
+
+    if (color.IsObject()) {
+        const Value &vGamma = color["gamma"];
+        const Value &vWhitepoint = color["whitepoint"];
+
+        if (vGamma.IsNumber()) {
+            gamma = vGamma.GetDouble();
+        } else if (!vGamma.IsNull() && mVerbose) {
+            std::clog << "Gamma value must be a number.\n";
         }
 
-        current = next;
+        if (vWhitepoint.IsArray() &&
+            vWhitepoint.Size() == 3 &&
+            vWhitepoint[0u].IsNumber() &&
+            vWhitepoint[1].IsNumber() &&
+            vWhitepoint[2].IsNumber()) {
+            whitepoint[0] = vWhitepoint[0u].GetDouble();
+            whitepoint[1] = vWhitepoint[1].GetDouble();
+            whitepoint[2] = vWhitepoint[2].GetDouble();
+        } else if (!vWhitepoint.IsNull() && mVerbose) {
+            std::clog << "Whitepoint value must be a list of 3 numbers.\n";
+        }
+
+    } else if (!color.IsNull() && mVerbose) {
+        std::clog << "Color correction value must be a JSON dictionary object.\n";
     }
 
-    // Submit new frames, if we had a queued frame waiting
-    if (mFrameWaitingForSubmit && mNumFramesPending < MAX_FRAMES_PENDING) {
-        writeFramebuffer();
+    /*
+     * Calculate the color LUT
+     */
+
+    for (unsigned channel = 0; channel < 3; channel++) {
+        for (unsigned entry = 0; entry < 256; entry++) {
+            double output;
+
+            /*
+             * Normalized input value corresponding to this LUT entry.
+             * Ranges from 0 to slightly higher than 1. (The last LUT entry
+             * can't quite be reached.)
+             */
+            double input = (entry << 8) / 65535.0;
+
+            // Scale by whitepoint before anything else
+            input *= whitepoint[channel];
+
+            output = pow(input, gamma);
+
+            // Round to the nearest integer, and clamp. Overflow-safe.
+            uint8_t intValue = (output * 0xFF) + 0.5;
+            mColorLUT[channel][entry] = std::max<uint8_t>(0, std::min<uint8_t>(0xFF, intValue));
+        }
     }
 }
 
 void FT232HDevice::writeFramebuffer()
 {
-    /*
-     * Asynchronously write the current framebuffer.
-     *
-     * TODO: Currently if this gets ahead of what the USB device is capable of,
-     *       we always drop frames. Alternatively, it would be nice to have end-to-end
-     *       flow control so that the client can produce frames slower.
-     */
-
-    if (mNumFramesPending >= MAX_FRAMES_PENDING) {
-        // Too many outstanding frames. Wait to submit until a previous frame completes.
-        mFrameWaitingForSubmit = true;
-        return;
-    }
-
-    if (submitTransfer(new Transfer(this, mFrameBuffer, sizeof(PixelFrame) * (mNumLights + 2)))) {
-        mFrameWaitingForSubmit = false;
-        mNumFramesPending++;
-    }
+    mpsse_write(mMpsse, (char *) mFrameBuffer, sizeof(PixelFrame) * (mNumLights + 2));
 }
 
 void FT232HDevice::writeMessage(Document &msg)
@@ -349,7 +231,7 @@ void FT232HDevice::writeDevicePixels(Document &msg)
             out->r = std::max(0, std::min(255, r.IsInt() ? r.GetInt() : 0));
             out->g = std::max(0, std::min(255, g.IsInt() ? g.GetInt() : 0));
             out->b = std::max(0, std::min(255, b.IsInt() ? b.GetInt() : 0));
-            out->l = 0xEF; // todo: fix so we actually pass brightness
+            out->l = 0xFF; // todo: fix so we actually pass brightness
         }
 
         writeFramebuffer();
@@ -472,10 +354,10 @@ void FT232HDevice::opcMapPixelColors(const OPC::Message &msg, const Value &inst)
             while (count--) {
                 PixelFrame *outPtr = fbPixel(outIndex);
                 outIndex += direction;
-                outPtr->r = inPtr[0];
-                outPtr->g = inPtr[1];
-                outPtr->b = inPtr[2];
-                outPtr->l = 0xEF; // todo: fix so we actually pass brightness
+                outPtr->r = mColorLUT[0][inPtr[0]];
+                outPtr->g = mColorLUT[1][inPtr[1]];
+                outPtr->b = mColorLUT[2][inPtr[2]];
+                outPtr->l = 0xFF; // todo: fix so we actually pass brightness
                 inPtr += 3;
             }
 
@@ -526,7 +408,7 @@ std::string FT232HDevice::getName()
     std::ostringstream s;
     s << "FT232H";
     if (mSerialString[0]) {
-        s << " (Serial# " << mSerialString << ", Version " << mVersionString << ")";
+        s << " (Serial# " << mSerialString << ")";
     }
     return s.str();
 }
@@ -534,6 +416,5 @@ std::string FT232HDevice::getName()
 void FT232HDevice::describe(rapidjson::Value &object, Allocator &alloc)
 {
     USBDevice::describe(object, alloc);
-    object.AddMember("version", mVersionString, alloc);
-    object.AddMember("bcd_version", mDD.bcdDevice, alloc);
+    object.AddMember("numLights", mNumLights, alloc);
 }
