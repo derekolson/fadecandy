@@ -86,28 +86,6 @@ endif
 
 INCLUDES += -I.
 
-##########################################################################
-# Built-in libmpsse
-
-INCLUDES += -Ilibmpsse
-
-C_FILES += \
-	libmpsse/mpsse.c \
-	libmpsse/support.c \
-	libmpsse/fast.c 
-
-CLEAN_FILES += libmpsse/*.d libmpsse/*.o
-
-###########################################################################
-# Built-in libftdi
-INCLUDES += -Ilibftdi
-
-C_FILES += \
-	libftdi/ftdi.c \
-	libftdi/ftdi_stream.c
-
-CLEAN_FILES += libftdi/*.d libftdi/*.o
-
 ###########################################################################
 # Built-in libwebsockets
 
