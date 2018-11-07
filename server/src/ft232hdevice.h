@@ -69,7 +69,7 @@ private:
 
     static const uint32_t START_FRAME = 0x00000000;
     static const uint32_t END_FRAME = 0xFFFFFFFF;
-    static const uint32_t BRIGHTNESS_MASK = 0xE0;
+    static const uint8_t BRIGHTNESS_MASK = 0xE0;
 
     union PixelFrame {
         struct
@@ -94,6 +94,7 @@ private:
     PixelFrame* mFlushBuffer;
     ColorLUT mColorLUT;
     uint32_t mNumLights;
+    uint8_t mBrightness;
 
     // buffer accessor
     PixelFrame *fbPixel(unsigned num) {

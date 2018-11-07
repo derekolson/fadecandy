@@ -193,6 +193,7 @@ void FT232HDevice::writeColorCorrection(const Value &color)
     // Default color LUT parameters
     double gamma = 1.0;                         // Power for nonlinear portion of curve
     double whitepoint[3] = {1.0, 1.0, 1.0};     // White-point RGB value (also, global brightness)
+    double brightness = 1.0; 
 
     /*
      * Parse the JSON object
@@ -201,6 +202,7 @@ void FT232HDevice::writeColorCorrection(const Value &color)
     if (color.IsObject()) {
         const Value &vGamma = color["gamma"];
         const Value &vWhitepoint = color["whitepoint"];
+        const Value &vBrightness = color["brightness"];
 
         if (vGamma.IsNumber()) {
             gamma = vGamma.GetDouble();
@@ -220,9 +222,20 @@ void FT232HDevice::writeColorCorrection(const Value &color)
             std::clog << "Whitepoint value must be a list of 3 numbers.\n";
         }
 
+        if (vBrightness.IsNumber()) {
+            brightness = vBrightness.GetDouble();
+        } else if (!vBrightness.IsNull() && mVerbose) {
+            std::clog << "Brightness value must be a number.\n";
+        }
+
     } else if (!color.IsNull() && mVerbose) {
         std::clog << "Color correction value must be a JSON dictionary object.\n";
     }
+
+    /*
+     * Set global brightness level
+     */
+    mBrightness = std::max<uint8_t>(0, std::min<uint8_t>(0xFF, (brightness * (0xFF - BRIGHTNESS_MASK)) + BRIGHTNESS_MASK));
 
     /*
      * Calculate the color LUT
@@ -322,7 +335,7 @@ void FT232HDevice::writeDevicePixels(Document &msg)
             out->r = std::max(0, std::min(255, r.IsInt() ? r.GetInt() : 0));
             out->g = std::max(0, std::min(255, g.IsInt() ? g.GetInt() : 0));
             out->b = std::max(0, std::min(255, b.IsInt() ? b.GetInt() : 0));
-            out->l = 0xFF; // todo: fix so we actually pass brightness
+            out->l = mBrightness;
         }
 
         writeFramebuffer();
@@ -448,7 +461,7 @@ void FT232HDevice::opcMapPixelColors(const OPC::Message &msg, const Value &inst)
                 outPtr->r = mColorLUT[0][inPtr[0]];
                 outPtr->g = mColorLUT[1][inPtr[1]];
                 outPtr->b = mColorLUT[2][inPtr[2]];
-                outPtr->l = 0xFF; // todo: fix so we actually pass brightness
+                outPtr->l = mBrightness;
                 inPtr += 3;
             }
 
