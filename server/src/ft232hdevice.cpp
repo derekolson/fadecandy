@@ -66,11 +66,89 @@ int FT232HDevice::open()
         return r;
     }
 
-    mMpsse = mpsse_open_dev(mDevice, TEN_MHZ);
-    mHandle = mMpsse->ftdi.usb_dev;
+    // Open USB Device
+    r = libusb_open(mDevice, &mHandle);
+    if (r < 0) {
+        return r;
+    }
+
+    libusb_detach_kernel_driver(mHandle, 0);
+
+    r = libusb_claim_interface(mHandle, 0);
+    if (r < 0) {
+        return r;
+    }
+
+    // Reset USB Device
+    r = libusb_control_transfer(mHandle, FTDI_DEVICE_OUT_REQTYPE, SIO_RESET_REQUEST, SIO_RESET_SIO, 1, NULL, 0, 1000);
+    if (r < 0) {
+        return r;
+    }
+
+    // Set Latency Timer
+    r = libusb_control_transfer(mHandle, FTDI_DEVICE_OUT_REQTYPE, SIO_SET_LATENCY_TIMER_REQUEST, LATENCY_MS, 1, NULL, 0, 1000);
+    if (r < 0) {
+        return r;
+    }
+
+    // Reset FTDI Mode
+    r = libusb_control_transfer(mHandle, FTDI_DEVICE_OUT_REQTYPE, SIO_SET_BITMODE_REQUEST, (BITMODE_RESET << 8), 1, NULL, 0, 1000);
+    if (r < 0) {
+        return r;
+    }
+
+    // Set Mode to MPSSE
+    r = libusb_control_transfer(mHandle, FTDI_DEVICE_OUT_REQTYPE, SIO_SET_BITMODE_REQUEST, (BITMODE_MPSSE << 8), 1, NULL, 0, 1000);
+    if (r < 0) {
+        return r;
+    }
+
+    unsigned char buf[3];
+
+    // Disable internal loop-back
+    buf[0] = 0x85;
+    mpsseWrite(buf, 1);
+
+    // Configure Clock
+    buf[0] = 0x8A; // Use 60MHz master clock (disable divide by 5)
+    buf[1] = 0x97; // Turn off adaptive clocking
+    buf[2] = 0x8D; // Disable three-phase clocking
+    mpsseWrite(buf, 3);
+
+    // Set Clock Speed
+    unsigned int clockDivisor = FREQ_TO_DIV(10000000);
+    buf[0] = 0x86; // Set clock divisor
+    buf[1] = clockDivisor & 0xFF; // Set LSB of clock divisor
+    buf[2] = (clockDivisor >> 8) & 0xFF; // Set MSB of clock divisor
+    mpsseWrite(buf, 3);
+
+    // Set initial GPIO pin states
+    buf[0] = 0x80; // Configure MPSSE ADBUS [D0-D7]
+    buf[1] = 0x08; // Initial state config
+    buf[2] = 0xFB; // Pin direction config
+    mpsseWrite(buf, 3);
+
+    buf[0] = 0x82; // Configure MPSSE ACBUS [C0-C7]
+    buf[1] = 0x00; // Initial state config
+    buf[2] = 0x00; // Pin direction config
+    mpsseWrite(buf, 3);
 
     return libusb_get_string_descriptor_ascii(mHandle, mDD.iSerialNumber, 
         (uint8_t*)mSerialBuffer, sizeof mSerialBuffer);
+}
+
+int FT232HDevice::mpsseWrite(unsigned char* buf, int size) {
+    if(MPSSE_DEBUG) {
+        for (int i=0; i<size; i++) {
+            printf("0x%02X ", buf[i]);
+            if (((i + 1)%16==0) && i != 0)
+                printf("\n");
+        }
+        printf("\n\n");
+    }
+
+    int bytes_written = 0;
+    return libusb_bulk_transfer(mHandle, OUT_ENDPOINT, buf, size, &bytes_written, 1000);
 }
 
 bool FT232HDevice::matchConfiguration(const Value &config) {
@@ -175,7 +253,20 @@ void FT232HDevice::writeColorCorrection(const Value &color)
 
 void FT232HDevice::writeFramebuffer()
 {
-    mpsse_write(mMpsse, (char *) mFrameBuffer, sizeof(PixelFrame) * (mNumLights + 2));
+    int dsize = sizeof(PixelFrame) * (mNumLights + 2);
+    int rsize = dsize - 1;
+    int total_size = dsize + 3;
+
+    unsigned char* buf = (unsigned char *) malloc(total_size);
+    memset(buf, 0, total_size);
+
+    // Append write command + payload size
+    buf[0] = 0x11;
+    buf[1] = (rsize & 0xFF);
+    buf[2] = ((rsize >> 8) & 0xFF);
+    memcpy(buf + 3, (unsigned char *) mFrameBuffer, dsize);
+
+    mpsseWrite(buf, total_size);
 }
 
 void FT232HDevice::writeMessage(Document &msg)

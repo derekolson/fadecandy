@@ -24,15 +24,27 @@
 #pragma once
 #include "usbdevice.h"
 #include "opc.h"
-#include <set>
 #include <unordered_map>
-#include "libmpsse/mpsse.h"
 
- /*
+/*
 * Identifiers of USB adapter.
 */
 #define FT232H_VID              0x0403
 #define FT232H_PID              0x6014
+
+// FTDI / MPSSE Commands
+#define MPSSE_DEBUG 0
+#define FTDI_DEVICE_OUT_REQTYPE (LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE | LIBUSB_ENDPOINT_OUT)
+#define SIO_RESET_REQUEST               0
+#define SIO_SET_LATENCY_TIMER_REQUEST   0x09
+#define SIO_SET_BITMODE_REQUEST         0x0B
+
+#define SIO_RESET_SIO                   0
+#define BITMODE_RESET                   0
+#define BITMODE_MPSSE                   0x02     
+#define LATENCY_MS                      2            
+
+#define FREQ_TO_DIV(freq) (((60000000 / freq) / 2) - 1)
 
 class FT232HDevice : public USBDevice
 {
@@ -53,6 +65,8 @@ public:
     virtual void describe(rapidjson::Value &object, Allocator &alloc);
 
 private:
+    static const unsigned char OUT_ENDPOINT = 0x02;
+
     static const uint32_t START_FRAME = 0x00000000;
     static const uint32_t END_FRAME = 0xFFFFFFFF;
     static const uint32_t BRIGHTNESS_MASK = 0xE0;
@@ -75,7 +89,6 @@ private:
 
     char mSerialBuffer[256];
 
-    mpsse_context *mMpsse;
     libusb_device_descriptor mDD;
     PixelFrame* mFrameBuffer;
     PixelFrame* mFlushBuffer;
@@ -87,6 +100,7 @@ private:
         return &mFrameBuffer[num + 1];
     }
 
+    int mpsseWrite(unsigned char* buf, int size);
     void writeDevicePixels(Document &msg);
     void writeFramebuffer();
 
