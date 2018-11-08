@@ -44,7 +44,6 @@ FT232HDevice::FT232HDevice(libusb_device *device, bool verbose)
 FT232HDevice::~FT232HDevice()
 {
     free(mFrameBuffer);
-    free(mFlushBuffer);
 }
 
 bool FT232HDevice::probe(libusb_device *device)
@@ -172,11 +171,7 @@ void FT232HDevice::loadConfiguration(const Value &config)
     uint32_t bufferSize = sizeof(PixelFrame) * (mNumLights + 2); // Number of lights plus start and end frames
     mFrameBuffer = (PixelFrame*)malloc(bufferSize);
 
-    uint32_t flushSize = (mNumLights / 2) + (mNumLights % 2);
-    mFlushBuffer = (PixelFrame*)malloc(flushSize);
-
     // Initialize all buffers to zero
-    memset(mFlushBuffer, 0, flushSize);
     memset(mFrameBuffer, 0, bufferSize);
 
     // Initialize start and end frames

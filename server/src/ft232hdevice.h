@@ -91,7 +91,6 @@ private:
 
     libusb_device_descriptor mDD;
     PixelFrame* mFrameBuffer;
-    PixelFrame* mFlushBuffer;
     ColorLUT mColorLUT;
     uint32_t mNumLights;
     uint8_t mBrightness;
