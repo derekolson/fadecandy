@@ -117,6 +117,7 @@ set(SRC
     "${PROJECT_SOURCE_DIR}/src/tcpnetserver.cpp"
     "${PROJECT_SOURCE_DIR}/src/usbdevice.cpp"
     "${PROJECT_SOURCE_DIR}/src/fcdevice.cpp"
+    "${PROJECT_SOURCE_DIR}/src/ft232hdevice.cpp"
     "${PROJECT_SOURCE_DIR}/src/enttecdmxdevice.cpp"
     "${PROJECT_SOURCE_DIR}/src/fcserver.cpp"
     "${PROJECT_SOURCE_DIR}/src/version.cpp"
