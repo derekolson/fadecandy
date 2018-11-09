@@ -25,6 +25,7 @@
 #include "usbdevice.h"
 #include "opc.h"
 #include <unordered_map>
+#include "interpolation.h"
 
 /*
 * Identifiers of USB adapter.
@@ -83,17 +84,17 @@ private:
         uint32_t value;
     };
 
-    typedef std::unordered_map<uint8_t, std::unordered_map<uint8_t, uint8_t>> ColorLUT;
-
     const Value *mConfigMap;
 
     char mSerialBuffer[256];
 
     libusb_device_descriptor mDD;
     PixelFrame* mFrameBuffer;
-    ColorLUT mColorLUT;
+    PixelFrame* mDrawBuffer;
+    fcLinearLUT mColorLUT;
     uint32_t mNumLights;
     uint8_t mBrightness;
+    Interpolation* mInterpolation;
 
     // buffer accessor
     PixelFrame *fbPixel(unsigned num) {

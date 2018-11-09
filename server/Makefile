@@ -11,6 +11,7 @@ CPP_FILES += \
 	src/enttecdmxdevice.cpp \
 	src/ft232hdevice.cpp \
 	src/fcserver.cpp \
+	src/interpolation.cpp \
 	src/version.cpp \
 	src/tinythread.cpp \
 	src/spidevice.cpp \

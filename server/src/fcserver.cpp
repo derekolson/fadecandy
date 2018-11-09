@@ -350,7 +350,7 @@ void FCServer::mainLoop()
     for (;;) {
         struct timeval timeout;
         timeout.tv_sec = 0;
-        timeout.tv_usec = 100000;
+        timeout.tv_usec = 1000;
 
         int err = libusb_handle_events_timeout_completed(mUSB, &timeout, 0);
         if (err) {

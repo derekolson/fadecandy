@@ -25,6 +25,7 @@
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/writer.h"
 #include "opc.h"
+#include "interpolation.h"
 #include <math.h>
 #include <iostream>
 #include <sstream>
@@ -44,6 +45,7 @@ FT232HDevice::FT232HDevice(libusb_device *device, bool verbose)
 FT232HDevice::~FT232HDevice()
 {
     free(mFrameBuffer);
+    free(mDrawBuffer);
 }
 
 bool FT232HDevice::probe(libusb_device *device)
@@ -170,17 +172,31 @@ void FT232HDevice::loadConfiguration(const Value &config)
 
     uint32_t bufferSize = sizeof(PixelFrame) * (mNumLights + 2); // Number of lights plus start and end frames
     mFrameBuffer = (PixelFrame*)malloc(bufferSize);
+    mDrawBuffer = (PixelFrame*)malloc(bufferSize);
 
     // Initialize all buffers to zero
     memset(mFrameBuffer, 0, bufferSize);
+    memset(mDrawBuffer, 0, bufferSize);
 
     // Initialize start and end frames
     mFrameBuffer[0].value = START_FRAME;
     mFrameBuffer[mNumLights + 1].value = END_FRAME;
+
+    mDrawBuffer[0].value = START_FRAME;
+    mDrawBuffer[mNumLights + 1].value = END_FRAME;
+
+    for(unsigned i=0; i<mNumLights; i++){
+        mFrameBuffer[i+1].l = BRIGHTNESS_MASK;
+        mDrawBuffer[i+1].l = BRIGHTNESS_MASK;
+    }
+
+    mInterpolation = new Interpolation(mNumLights);
 }
 
 void FT232HDevice::flush()
 {
+    mInterpolation->update((uint32_t *)mDrawBuffer);
+    writeFramebuffer();
 }
 
 void FT232HDevice::writeColorCorrection(const Value &color)
@@ -237,7 +253,7 @@ void FT232HDevice::writeColorCorrection(const Value &color)
      */
 
     for (unsigned channel = 0; channel < 3; channel++) {
-        for (unsigned entry = 0; entry < 256; entry++) {
+        for (unsigned entry = 0; entry < LUT_CH_SIZE; entry++) {
             double output;
 
             /*
@@ -253,10 +269,13 @@ void FT232HDevice::writeColorCorrection(const Value &color)
             output = pow(input, gamma);
 
             // Round to the nearest integer, and clamp. Overflow-safe.
-            uint8_t intValue = (output * 0xFF) + 0.5;
-            mColorLUT[channel][entry] = std::max<uint8_t>(0, std::min<uint8_t>(0xFF, intValue));
+            int64_t longValue = (output * 0xFFFF) + 0.5;
+            int intValue = std::max<int64_t>(0, std::min<int64_t>(0xFFFF, longValue));
+            mColorLUT.entries[channel * LUT_CH_SIZE + entry] = intValue;
         }
     }
+
+    mInterpolation->updateColorLut(&mColorLUT);
 }
 
 void FT232HDevice::writeFramebuffer()
@@ -272,7 +291,7 @@ void FT232HDevice::writeFramebuffer()
     buf[0] = 0x11;
     buf[1] = (rsize & 0xFF);
     buf[2] = ((rsize >> 8) & 0xFF);
-    memcpy(buf + 3, (unsigned char *) mFrameBuffer, dsize);
+    memcpy(buf + 3, (unsigned char *) mDrawBuffer, dsize);
 
     mpsseWrite(buf, total_size);
     free(buf);
@@ -334,7 +353,6 @@ void FT232HDevice::writeDevicePixels(Document &msg)
             out->l = mBrightness;
         }
 
-        writeFramebuffer();
     }
 }
 
@@ -348,7 +366,7 @@ void FT232HDevice::writeMessage(const OPC::Message &msg)
 
         case OPC::SetPixelColors:
             opcSetPixelColors(msg);
-            writeFramebuffer();
+            mInterpolation->updateKeyframe((uint8_t *) mFrameBuffer);
             return;
 
         case OPC::SystemExclusive:
@@ -454,9 +472,9 @@ void FT232HDevice::opcMapPixelColors(const OPC::Message &msg, const Value &inst)
             while (count--) {
                 PixelFrame *outPtr = fbPixel(outIndex);
                 outIndex += direction;
-                outPtr->r = mColorLUT[0][inPtr[0]];
-                outPtr->g = mColorLUT[1][inPtr[1]];
-                outPtr->b = mColorLUT[2][inPtr[2]];
+                outPtr->r = inPtr[0];
+                outPtr->g = inPtr[1];
+                outPtr->b = inPtr[2];
                 outPtr->l = mBrightness;
                 inPtr += 3;
             }
