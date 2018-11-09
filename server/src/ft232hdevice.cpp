@@ -137,14 +137,14 @@ int FT232HDevice::open()
 }
 
 int FT232HDevice::mpsseWrite(unsigned char* buf, int size) {
-    if(MPSSE_DEBUG) {
-        for (int i=0; i<size; i++) {
-            printf("0x%02X ", buf[i]);
-            if (((i + 1)%16==0) && i != 0)
-                printf("\n");
-        }
-        printf("\n\n");
+#if(MPSSE_DEBUG)
+    for (int i=0; i<size; i++) {
+        printf("0x%02X ", buf[i]);
+        if (((i + 1)%16==0) && i != 0)
+            printf("\n");
     }
+    printf("\n\n");
+#endif
 
     int bytes_written = 0;
     return libusb_bulk_transfer(mHandle, OUT_ENDPOINT, buf, size, &bytes_written, 1000);
