@@ -275,6 +275,7 @@ void FT232HDevice::writeFramebuffer()
     memcpy(buf + 3, (unsigned char *) mFrameBuffer, dsize);
 
     mpsseWrite(buf, total_size);
+    free(buf);
 }
 
 void FT232HDevice::writeMessage(Document &msg)
