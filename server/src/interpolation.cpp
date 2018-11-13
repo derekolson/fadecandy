@@ -1,5 +1,12 @@
 #include "interpolation.h"
 
+static int clamp(int val, int min, int max) {
+    val = min ^ (( min ^ val ) & -( min < val ));
+    val = max ^ (( val ^ max ) & -( val < max ));
+    // unsigned char val8bit = 0xFF & (( 0xFFFF & val ) >> 8 );
+    return val;
+}
+
 uint32_t Interpolation::calculateInterpCoefficient()
 {
     /*
@@ -134,9 +141,9 @@ uint32_t Interpolation::updatePixel(uint32_t icPrev, uint32_t icNext,
      * we clamp using a separate USAT instruction.
      */
 
-    int r8 = std::min<u_int16_t>(iR + 0x80, 0xffff) >> 8;
-    int g8 = std::min<u_int16_t>(iG + 0x80, 0xffff) >> 8;
-    int b8 = std::min<u_int16_t>(iB + 0x80, 0xffff) >> 8;
+    int r8 = clamp(iR + 0x80, 0, 0xffff) >> 8;
+    int g8 = clamp(iG + 0x80, 0, 0xffff) >> 8;
+    int b8 = clamp(iB + 0x80, 0, 0xffff) >> 8;
 
 #if FCP_DITHERING
     // Compute the error, after expanding the 8-bit value back to 16-bit.
