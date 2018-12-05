@@ -43,7 +43,7 @@
 #define SIO_RESET_SIO                   0
 #define BITMODE_RESET                   0
 #define BITMODE_MPSSE                   0x02     
-#define LATENCY_MS                      2            
+#define LATENCY_MS                      0            
 
 #define FREQ_TO_DIV(freq) (((60000000 / freq) / 2) - 1)
 
