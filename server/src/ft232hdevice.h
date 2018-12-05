@@ -104,6 +104,7 @@ private:
     int mpsseWrite(unsigned char* buf, int size);
     void writeDevicePixels(Document &msg);
     void writeFramebuffer();
+    void resetDevice();
 
     void opcSetPixelColors(const OPC::Message &msg);
     void opcSysEx(const OPC::Message &msg);

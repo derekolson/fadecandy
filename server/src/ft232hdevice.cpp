@@ -138,6 +138,15 @@ int FT232HDevice::open()
         (uint8_t*)mSerialBuffer, sizeof mSerialBuffer);
 }
 
+void FT232HDevice::resetDevice() {
+    if (mHandle) {
+        libusb_release_interface(mHandle, 0);
+        libusb_close(mHandle);
+    }
+
+    open();
+}
+
 int FT232HDevice::mpsseWrite(unsigned char* buf, int size) {
 #if(MPSSE_DEBUG)
     for (int i=0; i<size; i++) {
@@ -301,7 +310,8 @@ void FT232HDevice::writeFramebuffer()
 
     int ret = mpsseWrite(buf, total_size);
     if (ret < 0) {
-        std::clog << "USB device " << getName() << " - Error: " << libusb_error_name(ret) << "\n"; 
+        std::clog << "USB device " << getName() << " - Error: " << libusb_error_name(ret) << "\n";
+        resetDevice();
     }
     free(buf);
 }
