@@ -149,7 +149,13 @@ int FT232HDevice::mpsseWrite(unsigned char* buf, int size) {
 #endif
 
     int bytes_written = 0;
-    return libusb_bulk_transfer(mHandle, OUT_ENDPOINT, buf, size, &bytes_written, 1000);
+    int ret = libusb_bulk_transfer(mHandle, OUT_ENDPOINT, buf, size, &bytes_written, 1000);
+
+    if (bytes_written != size) {
+        std::clog << "USB device " << getName() << " Error: problem sending data\n";
+    }
+
+    return ret;
 }
 
 bool FT232HDevice::matchConfiguration(const Value &config) {
@@ -293,7 +299,10 @@ void FT232HDevice::writeFramebuffer()
     buf[2] = ((rsize >> 8) & 0xFF);
     memcpy(buf + 3, (unsigned char *) mDrawBuffer, dsize);
 
-    mpsseWrite(buf, total_size);
+    int ret = mpsseWrite(buf, total_size);
+    if (ret < 0) {
+        std::clog << "USB device " << getName() << " - Error: " << libusb_error_name(ret) << "\n"; 
+    }
     free(buf);
 }
 
